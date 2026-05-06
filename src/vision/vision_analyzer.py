@@ -21,11 +21,12 @@ class VisionAnalyzer:
     def __init__(self,
                  gateway_url: str = "ws://127.0.0.1:18789",
                  http_url: str = "http://127.0.0.1:18789",
-                 token: str = "5243ab3a1e61c8888508216ad4683d09ac668362a05d5a7f",
+                 token: Optional[str] = None,
                  model: str = "gemini-3-flash-preview"):
+        import os
         self.gateway_url = gateway_url
         self.http_url = http_url
-        self.token = token
+        self.token = token or os.environ.get("OPENCLAW_TOKEN", "")
         self.model = model
         self.ws = None
         self._ws_connected = False
