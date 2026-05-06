@@ -14,3 +14,8 @@ websocket-client>=1.6.0  # OpenClaw WebSocket RPC
 google-auth>=2.23.0
 google-auth-oauthlib>=1.1.0
 google-api-python-client>=2.100.0
+# 海報與影片生成工具
+moviepy>=2.0.0
+qrcode>=7.0.0
+reportlab>=4.0.0
+imageio-ffmpeg>=0.4.0
