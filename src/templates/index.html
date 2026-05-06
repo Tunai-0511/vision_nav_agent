@@ -5,17 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智慧導航 - 戶外行動版</title>
     <style>
+        .content-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 10px 60px;
+        }
         body {
             background-color: #000;
             color: #FFEA00;
             font-family: sans-serif;
             margin: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            overflow: hidden;
+            min-height: 100vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
         }
         #videoElement {
             width: 100vw;
@@ -111,10 +114,110 @@
             text-align: center;
             padding: 0 20px;
         }
+        #btnSchedule {
+            background-color: #4CAF50;
+            color: #fff;
+            font-size: 1.2rem;
+            font-weight: bold;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 12px;
+            margin-top: 15px;
+            cursor: pointer;
+            box-shadow: 0px 4px 10px rgba(76, 175, 80, 0.3);
+        }
+        #btnSchedule:active {
+            background-color: #388E3C;
+            transform: scale(0.98);
+        }
+        #schedulePanel {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 400px;
+            margin-top: 15px;
+            gap: 12px;
+        }
+        #btnScheduleVoice {
+            background-color: #00b3cc;
+            color: #000;
+            font-size: 1.2rem;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            width: 100%;
+        }
+        #btnScheduleVoice:active {
+            background-color: #0097A7;
+            transform: scale(0.98);
+        }
+        #scheduleForm {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            width: 100%;
+        }
+        #scheduleForm input {
+            background: #333;
+            color: #FFEA00;
+            border: 1px solid #555;
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 1rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        #scheduleForm input::placeholder {
+            color: #888;
+        }
+        #scheduleForm button[type="submit"] {
+            background-color: #4CAF50;
+            color: #fff;
+            font-size: 1.2rem;
+            font-weight: bold;
+            padding: 12px;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+        }
+        #scheduleTodayList {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 5px;
+        }
+        .schedule-event-card {
+            background: #222;
+            border-radius: 10px;
+            padding: 10px 14px;
+            color: #FFEA00;
+            font-size: 0.95rem;
+        }
+        .schedule-event-card .event-title {
+            font-weight: bold;
+            font-size: 1.05rem;
+        }
+        .schedule-event-card .event-time {
+            color: #aaa;
+            margin-top: 4px;
+        }
+        .schedule-event-card .event-location {
+            color: #888;
+            margin-top: 2px;
+        }
+        .schedule-empty {
+            color: #666;
+            font-size: 0.95rem;
+            text-align: center;
+            padding: 10px;
+        }
     </style>
 </head>
 <body>
-
+    <div class="content-wrapper">
     <!-- 顯示攝影鏡頭 -->
     <video id="videoElement" autoplay playsinline muted></video>
 
@@ -128,6 +231,19 @@
 
     <button id="btnSetHome">🏠 把現在位置設為家</button>
     <div id="homeStatus">🏠 尚未設定家裡座標</div>
+
+    <button id="btnSchedule">📅 行事曆</button>
+    <div id="schedulePanel" style="display:none;">
+        <button id="btnScheduleVoice">🎤 語音新增行事曆</button>
+        <form id="scheduleForm">
+            <input type="text" id="scheduleTitle" placeholder="事件標題" required>
+            <input type="datetime-local" id="scheduleStart" placeholder="開始時間">
+            <input type="datetime-local" id="scheduleEnd" placeholder="結束時間（選填）">
+            <input type="text" id="scheduleLocation" placeholder="地點（選填）">
+            <button type="submit">新增事件</button>
+        </form>
+        <div id="scheduleTodayList"></div>
+    </div>
 
     <!-- 用來把影片截圖轉為圖片隱藏用的畫布 -->
     <canvas id="canvas" style="display:none;"></canvas>
@@ -549,13 +665,163 @@
                     window.speechSynthesis.cancel();
                 }
                 speak("系統已停用");
-                
+
                 // 停止相機以省電
                 if (video.srcObject) {
                     video.srcObject.getTracks().forEach(track => track.stop());
                 }
             }
         });
+
+        // ============== 行事曆 UI ==============
+        const btnSchedule = document.getElementById('btnSchedule');
+        const schedulePanel = document.getElementById('schedulePanel');
+        const btnScheduleVoice = document.getElementById('btnScheduleVoice');
+        const scheduleForm = document.getElementById('scheduleForm');
+        const scheduleTodayList = document.getElementById('scheduleTodayList');
+
+        let scheduleVoiceStream = null;
+        let scheduleVoiceContext = null;
+        let scheduleRecordingData = [];
+        let isScheduleRecording = false;
+        let scheduleScriptProcessor = null;
+
+        btnSchedule.addEventListener('click', async () => {
+            if (schedulePanel.style.display === 'none') {
+                schedulePanel.style.display = 'flex';
+                loadScheduleToday();
+            } else {
+                schedulePanel.style.display = 'none';
+            }
+        });
+
+        async function loadScheduleToday() {
+            scheduleTodayList.innerHTML = '<div class="schedule-empty">載入中...</div>';
+            try {
+                const r = await fetch('/api/schedule/today');
+                const result = await r.json();
+                if (!result.ok) {
+                    scheduleTodayList.innerHTML = `<div class="schedule-empty">${result.error}</div>`;
+                    return;
+                }
+                if (!result.events || result.events.length === 0) {
+                    scheduleTodayList.innerHTML = '<div class="schedule-empty">今天沒有行程</div>';
+                    return;
+                }
+                scheduleTodayList.innerHTML = result.events.map(e => {
+                    const start = e.start ? new Date(e.start).toLocaleString('zh-TW', { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' }) : '';
+                    const end = e.end ? new Date(e.end).toLocaleString('zh-TW', { hour: '2-digit', minute: '2-digit' }) : '';
+                    const timeStr = end ? `${start} ~ ${end}` : start;
+                    return `<div class="schedule-event-card"><div class="event-title">${e.title || '(無標題)'}</div><div class="event-time">${timeStr}</div>${e.location ? `<div class="event-location">📍 ${e.location}</div>` : ''}</div>`;
+                }).join('');
+            } catch (e) {
+                scheduleTodayList.innerHTML = '<div class="schedule-empty">載入失敗</div>';
+            }
+        }
+
+        // 錄音：開始
+        btnScheduleVoice.addEventListener('click', async () => {
+            if (isScheduleRecording) {
+                // 停止錄音並發送
+                isScheduleRecording = false;
+                btnScheduleVoice.innerText = '🎤 語音新增行事曆';
+                statusText.innerText = '處理中，請稍候...';
+
+                if (scheduleScriptProcessor) scheduleScriptProcessor.disconnect();
+                if (scheduleVoiceStream) scheduleVoiceStream.getTracks().forEach(t => t.stop());
+                if (scheduleVoiceContext && scheduleVoiceContext.state !== 'closed') scheduleVoiceContext.close();
+
+                let totalLen = scheduleRecordingData.reduce((a, v) => a + v.length, 0);
+                let merged = new Float32Array(totalLen);
+                let offset = 0;
+                for (let d of scheduleRecordingData) { merged.set(d, offset); offset += d.length; }
+                const wavBlob = encodeWAV(merged, 16000);
+
+                try {
+                    const resp = await fetch('/api/command_audio', { method: 'POST', body: wavBlob });
+                    if (resp.ok) {
+                        const result = await resp.json();
+                        statusText.innerText = `🗣️: ${result.text || '(無內容)'}`;
+                        if (result.text) {
+                            // 把語音辨識結果送到 schedule_voice 讓 OpenClaw 解析
+                            const sr = await fetch('/api/schedule_voice', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ command: result.text })
+                            });
+                            const srResult = await sr.json();
+                            if (srResult.ok) {
+                                speak(`已新增行事曆事件：${srResult.title}`);
+                                scheduleForm.reset();
+                                loadScheduleToday();
+                            } else {
+                                speak(`無法建立事件：${srResult.error}`);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    statusText.innerText = '無法連線伺服器';
+                }
+                scheduleRecordingData = [];
+                return;
+            }
+
+            // 開始錄音
+            isScheduleRecording = true;
+            scheduleRecordingData = [];
+            btnScheduleVoice.innerText = '🛑 錄音中...';
+            statusText.innerText = '🔴 錄音中，請講話（如：明天九點看醫生）';
+
+            try {
+                scheduleVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                const AudioCtxCls = window.AudioContext || window.webkitAudioContext;
+                scheduleVoiceContext = new AudioCtxCls({ sampleRate: 16000 });
+                const src = scheduleVoiceContext.createMediaStreamSource(scheduleVoiceStream);
+                scheduleScriptProcessor = scheduleVoiceContext.createScriptProcessor(4096, 1, 1);
+                scheduleScriptProcessor.onaudioprocess = (e) => {
+                    scheduleRecordingData.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+                };
+                src.connect(scheduleScriptProcessor);
+                scheduleScriptProcessor.connect(scheduleVoiceContext.destination);
+            } catch (e) {
+                isScheduleRecording = false;
+                btnScheduleVoice.innerText = '🎤 語音新增行事曆';
+                statusText.innerText = '無法取得麥克風權限';
+            }
+        });
+
+        // 手動表單送出
+        scheduleForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const title = document.getElementById('scheduleTitle').value;
+            const start = document.getElementById('scheduleStart').value;
+            const end = document.getElementById('scheduleEnd').value;
+            const location = document.getElementById('scheduleLocation').value;
+
+            if (!title || !start) {
+                speak('請填寫標題和開始時間');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/schedule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, start, end: end || null, location: location || null })
+                });
+                const result = await resp.json();
+                if (result.ok) {
+                    speak(`已新增行事曆事件：${title}`);
+                    scheduleForm.reset();
+                    loadScheduleToday();
+                } else {
+                    speak(`新增失敗：${result.error}`);
+                }
+            } catch (e) {
+                speak('無法連線伺服器');
+            }
+        });
     </script>
+    </div>
 </body>
 </html>

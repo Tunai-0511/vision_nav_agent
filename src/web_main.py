@@ -282,6 +282,59 @@ def add_schedule(payload: ScheduleEventPayload):
     except Exception as e:
         return {"ok": False, "error": f"建立事件失敗: {e}"}
 
+@app.post("/api/schedule_voice")
+def add_schedule_voice(payload: CommandPayload):
+    """
+    接收自然語言語音轉文字內容，用 OpenClaw 解析時間地點後建立 Google Calendar 事件
+    """
+    text = payload.command
+    print(f"\n[📅 行事曆語音新增] 收到文字: {text}")
+
+    try:
+        # 讓 OpenClaw 解析自然語言
+        prompt = (
+            f"請從以下文字解析出行事曆事件資訊，返回繁體中文 JSON。"
+            f"只返回 JSON，不要有任何其他解釋。\n"
+            f"輸入：「{text}」\n"
+            f"JSON 格式：{{\"title\": \"事件標題\", \"start\": \"ISO 8601 開始時間\", \"end\": \"ISO 8601 結束時間\", \"location\": \"地點\"}}"
+        )
+        raw = vision_analyzer.chat_text(prompt, timeout_s=30)
+        if not raw:
+            return {"ok": False, "error": "OpenClaw 無回覆"}
+
+        # 解析 JSON 回覆
+        import re, json
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if not match:
+            return {"ok": False, "error": f"無法解析回覆: {raw}"}
+
+        parsed = json.loads(match.group())
+        title = parsed.get("title", text)
+        start_str = parsed.get("start")
+        end_str = parsed.get("end")
+        location = parsed.get("location")
+
+        if not start_str:
+            return {"ok": False, "error": "無法解析時間"}
+
+        start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00")) if end_str else None
+
+        client = get_calendar_client()
+        event = client.add_event(
+            title=title,
+            start=start_dt,
+            end=end_dt,
+            location=location,
+        )
+        print(f"[📅 行事曆事件已建立] {title}")
+        return {"ok": True, "event_id": event.get("id"), "title": title}
+    except FileNotFoundError as e:
+        return {"ok": False, "error": str(e)}
+    except Exception as e:
+        print(f"[📅 行事曆語音新增失敗] {e}")
+        return {"ok": False, "error": f"建立事件失敗: {e}"}
+
 @app.post("/api/location")
 def ingest_location(payload: LocationPayload):
     """
