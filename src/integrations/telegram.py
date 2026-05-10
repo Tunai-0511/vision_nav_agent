@@ -42,3 +42,22 @@ class TelegramClient:
         except Exception as e:
             logger.error(f"Telegram send_message failed: {e}")
             return False
+
+    def send_photo(self, photo_bytes: bytes, caption: Optional[str] = None) -> bool:
+        """發送圖片到 Telegram（供 OpenClaw 處理）"""
+        if not self.is_configured():
+            logger.warning("Telegram 未設定，無法發送圖片")
+            return False
+        url = f"{API_BASE}/bot{self.bot_token}/sendPhoto"
+        payload = {"chat_id": self.chat_id}
+        if caption:
+            payload["caption"] = caption
+        try:
+            r = requests.post(url, files={"photo": ("photo.jpg", photo_bytes, "image/jpeg")}, data=payload, timeout=30)
+            if r.status_code != 200:
+                logger.error(f"Telegram send_photo HTTP {r.status_code}: {r.text[:200]}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Telegram send_photo failed: {e}")
+            return False
